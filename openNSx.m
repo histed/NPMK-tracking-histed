@@ -3,7 +3,7 @@ function varargout = openNSx(varargin)
 % openNSx
 % 
 % Opens and reads an NSx file then returns all file information in a NSx
-% structure. Works with File Spec 2.1 and 2.2.
+% structure. Works with File Spec 2.1, 2.2 and 2.3.
 % Use OUTPUT = openNSx(fname, 'read', 'report', 'electrodes', 'channels', 'duration', 'mode', 'precision', 'skipfactor').
 % 
 % All input arguments are optional. Input arguments can be in any order.
@@ -24,6 +24,12 @@ function varargout = openNSx(varargin)
 %                 and less than or equal to 128. The electrodes can be
 %                 selected either by specifying a range (e.g. 20:45) or by
 %                 indicating individual electrodes (e.g. 3,6,7,90) or both.
+%                 Note that, when individual channels are to be read, all
+%                 channels in between will also be read. The prorgam will
+%                 then remove the unwanted channels. This may result in a
+%                 large memory footprint. If memory issues arrise please
+%                 consider placing openNSx in a for loop and reading
+%                 individual channels.
 %                 This field needs to be preceded by the prefix 'e:'. See
 %                 example for more details. If this option is selected the
 %                 user will be promped for a CMP mapfile (see: KTUEAMapFile)
@@ -36,6 +42,12 @@ function varargout = openNSx(varargin)
 %                 and less than or equal to 128. The channels can be
 %                 selected either by specifying a range (e.g. 20:45) or by
 %                 indicating individual channels (e.g. 3,6,7,90) or both.
+%                 Note that, when individual channels are to be read, all
+%                 channels in between will also be read. The prorgam will
+%                 then remove the unwanted channels. This may result in a
+%                 large memory footprint. If memory issues arrise please
+%                 consider placing openNSx in a for loop and reading
+%                 individual channels.
 %                 This field needs to be preceded by the prefix 'c:'. See
 %                 example for more details.
 %                 DEFAULT: will read all existing analog channels.
@@ -109,7 +121,7 @@ function varargout = openNSx(varargin)
 %   Kian Torab
 %   ktorab@blackrockmicro.com
 %   Blackrock Microsystems
-%   Version 4.0.1.0
+%   Version 4.0.7.0
 %
 
 %% Defining the NSx data structure and sub-branches.
@@ -119,10 +131,11 @@ NSx.MetaTags = struct('FileTypeID',[],'SamplingLabel',[],'ChannelCount',[],'Samp
                       'Timestamp', [], 'DataPoints', [], 'openNSxver', [], 'Filename', [], 'FilePath', [], ...
                       'FileExt', [], 'HeaderOffset', []);
 
-NSx.MetaTags.openNSxver = '4.0.0.3';
+NSx.MetaTags.openNSxver = '4.0.7.0';
 
 % Defining constants
-ExtHeaderLength            = 66;
+ExtHeaderLength = 66;
+elecReading     = 0;
 
 %% Validating the input arguments. Exit with error message if error occurs.
 next = '';
@@ -133,13 +146,13 @@ for i=1:length(varargin)
         Chan = inputArgument;
     elseif strcmpi(next, 'electrodes')
         next = '';
-        if exist('KTUEAMapFiel', 'file') == 2
+        if exist('KTUEAMapFile', 'file') == 2
             Mapfile = KTUEAMapFile;
             Elec = str2num(inputArgument); %#ok<ST2NM>
             for chanIDX = 1:length(Elec)
                 Chan(chanIDX) = Mapfile.Electrode2Channel(Elec(chanIDX));
             end
-            clear Elec;
+            elecReading = 1;
         else
             disp('To read data by ''electrodes'' the function KTUEAMapFile needs to be in path.');
             clear variables;
@@ -172,7 +185,7 @@ for i=1:length(varargin)
         clear precisionTypeRaw;
     elseif strcmpi(next, 'skipfactor')
         next = '';
-        skipFactor = inputArgument;
+        skipFactor = str2double(inputArgument);
     elseif strcmpi(inputArgument, 'channels')
         next = 'channels';
     elseif strcmpi(inputArgument, 'skipfactor')
@@ -200,13 +213,13 @@ for i=1:length(varargin)
         end
         clear colonIndex;
     elseif strncmp(inputArgument, 'e:', 2) && inputArgument(3) ~= '\' && inputArgument(3) ~= '/'
-        if exist('KTUEAMapFiel', 'file') == 2
+        if exist('KTUEAMapFile', 'file') == 2
             Mapfile = KTUEAMapFile;
             Elec = str2num(inputArgument(3:end)); %#ok<ST2NM>
             for chanIDX = 1:length(Elec)
                 Chan(chanIDX) = Mapfile.Electrode2Channel(Elec(chanIDX));
             end
-            clear Elec;
+            elecReading = 1;
         else
             disp('To read data by ''electrodes'' the function KTUEAMapFile needs to be in path.');
             clear variables;
@@ -317,7 +330,8 @@ elseif strcmpi(NSx.MetaTags.FileTypeID, 'NEURALCD')
     t                          = double(typecast(BasicHeader(287:302), 'uint16'));
     ChannelCount               = typecast(BasicHeader(303:306), 'uint32');
     NSx.MetaTags.ChannelCount  = ChannelCount;
-    ExtendedHeader             = fread(FID, ChannelCount * ExtHeaderLength, '*uint8');
+    readSize                   = double(ChannelCount * ExtHeaderLength);
+    ExtendedHeader             = fread(FID, readSize, '*uint8');
 	if (fread(FID, 1, 'uint8') ~= 1)
 		disp('header corrupted!');
 		fclose(FID);
@@ -338,7 +352,6 @@ elseif strcmpi(NSx.MetaTags.FileTypeID, 'NEURALCD')
 			return;			
 		end
 		NSx.ElectrodesInfo(headerIDX).ElectrodeID = typecast(ExtendedHeader((3:4)+offset), 'uint16');
-        NSx.MetaTags.ChannelID(headerIDX) = NSx.ElectrodesInfo(headerIDX).ElectrodeID;
 		NSx.ElectrodesInfo(headerIDX).Label = char(ExtendedHeader((5:20)+offset))';
 		NSx.ElectrodesInfo(headerIDX).ConnectorBank = char(ExtendedHeader(21+offset) + ('A' - 1));
 		NSx.ElectrodesInfo(headerIDX).ConnectorPin   = ExtendedHeader(22+offset);
@@ -368,6 +381,13 @@ else
     clear variables;
     return;
 end
+
+%% Determining the number of channels to read
+if ~exist('Chan', 'var')
+    Chan = 1:NSx.MetaTags.ChannelCount; 
+end
+
+%% Calculating the length of header and data
 fHeader = ftell(FID);
 NSx.MetaTags.HeaderOffset = fHeader;
 fseek(FID, 0, 'eof');
@@ -405,13 +425,6 @@ end
 % from now StartPacket and EndPacket are in terms of Samples and are zero-based
 clear TimeScale
 
-if EndPacket >= NSx.MetaTags.DataPoints
-    disp('This version cannot read paused files after pause');
-    fclose(FID);
-    if nargout; NSx = []; end
-    return;    
-end
-
 %% Validate StartPacket and EndPacket to make sure they do not exceed the
 %  length of packets in the file. If EndPacket is over then the last packet
 %  will be set for EndPacket. If StartPacket is over then will exist with an
@@ -419,6 +432,7 @@ end
 if EndPacket >= NSx.MetaTags.NumofPackets
     if StartPacket >= NSx.MetaTags.NumofPackets
         disp('The starting packet is greater than the total data duration.');
+        disp('The file was not read.');
 		fclose(FID);
         if nargout; varargout{1} = []; end
         return;
@@ -430,8 +444,44 @@ if EndPacket >= NSx.MetaTags.NumofPackets
         pause;
     end
     EndPacket = NSx.MetaTags.NumofPackets - 1;
-else
-DataLength = EndPacket - StartPacket + 1;
+end
+DataLength = double(EndPacket - StartPacket + 1);
+
+% The second part including && is a workaround for the bug in Central. 
+% Remove when bug is fixed.
+if EndPacket >= NSx.MetaTags.DataPoints && NSx.MetaTags.DataPoints ~= 0
+    disp('It appears that multiple sessions were recorded in this file using the pause feature in Central.');
+    disp('This version cannot read files that were paused while recording.');
+    disp('Data was not read.');
+    fclose(FID);
+    if nargout; NSx = []; end
+    return;    
+end
+
+if strcmp(ReadData, 'read')
+    ReadElec = double(max(Chan)-min(Chan)+1);
+    if elecReading
+        if ~all(ismember(Chan,[NSx.ElectrodesInfo.ElectrodeID]))
+            fprintf('The recorded electrodes were: %s\n', num2str(Mapfile.Channel2Electrode([NSx.ElectrodesInfo.ElectrodeID])));            
+            fprintf(2,'Data was not read.\n');        
+            fclose(FID);
+            if nargout; varargout{1} = []; end
+            return;
+        end
+    else
+        if max(Chan) > NSx.MetaTags.ChannelCount
+            fprintf(2,'The channel selected for reading is greater than the number of channels recorded.\n');
+            fprintf('Only %d channels were recorded.', NSx.MetaTags.ChannelCount);
+            fprintf(2,'Data was not read.\n');        
+            fclose(FID);
+            if nargout; varargout{1} = []; end
+            return;
+        end
+    end
+    fseek(FID, StartPacket * 2 * ChannelCount + fHeader, 'bof');
+    fseek(FID, (min(Chan)-1) * 2, 'cof');
+    NSx.Data = fread(FID, [ReadElec DataLength], [num2str(ReadElec) precisionType], double((ChannelCount-ReadElec)*2 + ChannelCount*(skipFactor-1)*2));
+end
 
 %% Displaying a report of basic file information and the Basic Header.
 if strcmp(Report, 'report')
@@ -456,23 +506,12 @@ end
 %% Read data points
 if ~exist('Chan', 'var'); Chan = 1:ChannelCount; end
 
-if strcmp(ReadData, 'read')
-    ReadElec = max(Chan)-min(Chan)+1;
-    if max(Chan) > NSx.MetaTags.ChannelCount
-        fprintf(2,'\nThe channel selected is greater than the maximum number of channels in the file.\n');
-        fclose(FID);
-        if nargout; varargout{1} = []; end
-        return;
-    end
-    fseek(FID, StartPacket * 2 * ChannelCount + fHeader, 'bof');
-    fseek(FID, (min(Chan)-1) * 2, 'cof');
-    NSx.Data = fread(FID, [ReadElec DataLength], [num2str(ReadElec) precisionType], (ChannelCount-ReadElec)*2 + ChannelCount*(skipFactor-1)*2);
-end
-
 %% Removing unwanted channels
 channelRange = min(Chan):max(Chan);
-deleteChannels = setdiff(channelRange,Chan) - min(Chan) + 1;
-NSx.Data(deleteChannels,:) = [];
+if ~isempty(setdiff(channelRange,Chan))
+    deleteChannels = setdiff(channelRange,Chan) - min(Chan) + 1;
+    NSx.Data(deleteChannels,:) = [];
+end
 
 %% If user does not specify an output argument it will automatically create
 %  a structure.

@@ -14,9 +14,6 @@ function varargout = openNEV(varargin)
 %                 file user interface. 
 %                 DEFAULT: Will open Open File UI.
 %
-%   'HeaderOnly': Will read the header only, no data or waveform
-%                 DEFAULT: Read data and header
-%
 %   'read':       Will read the spike waveforms if user passes this argument.
 %                 DEFAULT: will not read spike waveform.
 %
@@ -121,7 +118,7 @@ function varargout = openNEV(varargin)
 %     Ehsan Azarnasab, Blackrock Microsystems, ehsan@blackrockmicro.com
 %     Tyler Davis, University of Utah, tyler.davis@hsc.utah.edu
 %   
-%   Version 4.0.0.5
+%   Version 4.0.1.0
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% Defining structures
@@ -145,45 +142,16 @@ NEV.Data.PatientTrigger = struct('TimeStamp', [], 'TriggerType', []);
 NEV.Data.Reconfig = struct('TimeStamp', [], 'ChangeType', [], 'CompName', [], 'ConfigChanged', []);
 Flags = struct;
 
-NEV.MetaTags.openNEVver = '4.0.0.5';
+NEV.MetaTags.openNEVver = '4.0.1.0';
 
 %% Check for multiple versions of openNEV in path
 if size(which('openNEV', '-ALL'),1) > 1
     disp('WARNING: There are multiple openNEV functions in the path. Use which openNEV -ALL for more information.');
 end
 
-%% Check for update
-% if exist('autoUpdater', 'file')
-%     openNEVSettingsFullPath = getSettingFileFullPath('openNEV');
-%     if exist(openNEVSettingsFullPath, 'file') == 2
-%         settingsFID = fopen(openNEVSettingsFullPath, 'r');
-%         updateCheckDate = fscanf(settingsFID, '%200c');
-%         fclose(settingsFID);
-%     else
-%         updateCheckDate = date;
-%         autoUpdater('openNEV', NEV.MetaTags.openNEVver);
-%         settingsFID = fopen(openNEVSettingsFullPath, 'w');
-%         fprintf(settingsFID, '%s', updateCheckDate);
-%         fclose(settingsFID);
-%     end
-%     if isempty(updateCheckDate); updateCheckDate = 0; end;
-%     lastCheckNum = datenum(updateCheckDate);
-%     dateDifference = datenum(date) - lastCheckNum;
-%     if dateDifference > 7
-%         autoUpdater('openNEV', NEV.MetaTags.openNEVver);
-%         settingsFID = fopen(openNEVSettingsFullPath, 'w');
-%         fprintf(settingsFID, '%s', date);
-%         fclose(settingsFID);
-%     end
-%     clear settingsFID dateDifference openNEVSettingsFullPath lastCheckNum updateCheckDate ans;
-% end
-
 %% Validating input arguments
-Flags.HeaderOnly = false;
 for i=1:length(varargin)
     switch lower(varargin{i})
-        case 'headeronly'
-            Flags.HeaderOnly = true;
         case 'report'
             Flags.Report = varargin{i};
         case 'noreport'
@@ -288,7 +256,6 @@ if exist(matPath, 'file') == 2 && strcmpi(Flags.NoMAT, 'yesmat')
             assignin('base', 'NEV', NEV);
             clear variables;
         end
-        varargout{1} = NEV;
         return;
     end
 end
@@ -358,7 +325,15 @@ for ii=1:Trackers.countExtHeader
             NEV.ElectrodesInfo(ElectrodeID).ElectrodeID     = ElectrodeID;
             NEV.ElectrodesInfo(ElectrodeID).ConnectorBank   = char(ExtendedHeader(11)+64);
             NEV.ElectrodesInfo(ElectrodeID).ConnectorPin    = ExtendedHeader(12);
-            NEV.ElectrodesInfo(ElectrodeID).DigitalFactor   = typecast(ExtendedHeader(13:14),'int16');
+            df   = typecast(ExtendedHeader(13:14),'int16');
+            % This is a workaround for the DigitalFactor overflow in NEV 
+            % files. Remove once Central is updated
+            if df == 21516
+                NEV.ElectrodesInfo(ElectrodeID).DigitalFactor = 152592.547;
+            else
+                NEV.ElectrodesInfo(ElectrodeID).DigitalFactor = df;
+            end
+            % End of workaround
             NEV.ElectrodesInfo(ElectrodeID).EnergyThreshold = typecast(ExtendedHeader(15:16),'uint16');
             NEV.ElectrodesInfo(ElectrodeID).HighThreshold   = typecast(ExtendedHeader(17:18),'int16');
             NEV.ElectrodesInfo(ElectrodeID).LowThreshold    = typecast(ExtendedHeader(19:20),'int16');
@@ -438,7 +413,7 @@ Timestamp = [];
 PacketIDs = [];
 tempClassOrReason = [];
 tempDigiVals = [];
-if ~Flags.HeaderOnly 
+if strcmpi(Flags.ReadData, 'read') && NEV.MetaTags.PacketCount ~= 0
     fseek(FID, Trackers.fExtendedHeader, 'bof');
     tRawData  = fread(FID, [10 Trackers.countDataPacket], '10*uint8=>uint8', Trackers.countPacketBytes - 10);
     Timestamp = tRawData(1:4,:);
@@ -652,7 +627,7 @@ if ~isempty(DigiValues)
         clear DigiValues;
     end
 else
-    if ~Flags.HeaderOnly
+    if strcmpi(Flags.ReadData, 'read')
         if strcmpi(Flags.Report, 'report')
             disp('No digital data to read.');
         end
@@ -710,27 +685,3 @@ end
 
 fclose(FID);
 clear Flags Trackers FID matPath;
-
-% function autoUpdater(functionName, curVersion)
-% 
-% Webaddress = 'http://kianabc.com/KianABC/';
-% try
-%     disp('Checking for an update...');
-%     fileWebpage = urlread([Webaddress 'kinTools.html']);
-%     functionNameBegIndex = findstr(fileWebpage, functionName);
-%     functionNameEndIndex = functionNameBegIndex + length(functionName);
-%     versionBegIndex = functionNameEndIndex+1;
-%     versionEndIndex = find(fileWebpage(versionBegIndex:end) == '<', 1) - 3 + versionBegIndex;
-%     Version = fileWebpage(versionBegIndex:versionEndIndex);
-%     linkBegIndex = versionEndIndex+12;
-%     linkEndIndex = find(fileWebpage(linkBegIndex:end) == '"',1)-2+linkBegIndex;
-%     link = fileWebpage(linkBegIndex:linkEndIndex);
-%     fullLink = [Webaddress link];
-% 
-%     if any(Version > curVersion)
-%         assignin('base', 'DownloadLink', fullLink);
-%         versionWarning = [];
-%         fprintf(2, 'There is a new version (%s) of this function available for download.\n', Version);
-%         disp('Click <a href="matlab:web(fullLink, ''-browser'')">here</a> to download the new version.')
-%     end
-% end

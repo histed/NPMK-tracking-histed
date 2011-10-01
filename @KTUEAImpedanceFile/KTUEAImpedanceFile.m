@@ -13,11 +13,14 @@ classdef KTUEAImpedanceFile
 %               function that maps the electrodes to channel numbers. If
 %               mapfile is not provided then a default map will be used.
 %
+%   To see a list of methods type methods(plotImpedances).
+%
 %   Kian Torab
-%   kian.torab@utah.edu
-%   Department of Bioengineering
-%   University of Utah
-%   Version 1.0.1 - April 29, 2010
+%   ktorab@blackrockmicro.com
+%   Blackrock Microsystems
+%   Version 1.1.0
+%
+%   Ideas borrowed from Sergey Stavisky, The BrainGate Project
 
     properties (Hidden, SetAccess = private, GetAccess = private)
         chanCount    = 96;
@@ -28,20 +31,17 @@ classdef KTUEAImpedanceFile
     end
     methods(Hidden)
         function obj = KTUEAImpedanceFile(Mapfile)
-            folderManager = KTFolderManager;
             if ~exist('Mapfile', 'var')
                 obj.Mapfile = KTUEAMapFile;
             else
                 obj.Mapfile = Mapfile;
             end
             if ~obj.Mapfile.isValid; return; end;
-%             fileHandle = '2010-02-19-R03067-UEAback-Impedances.txt';
-%             pathHandle = 'Z:\SYNC D Drive\Data\Frik\UEA\Back\Impedences\';
-            Mapfilename = obj.Mapfile.getFilename;
-            if ~isempty(strfind(Mapfilename, 'Back'))
-                [obj.fileHandle obj.pathHandle] = uigetfile(folderManager.DefaultLoadImpedancesBackLocation, 'Open an impedance file...');
+            
+            if exist('getFile.m', 'file') == 2
+                [obj.fileHandle obj.pathHandle] = getFile('*.txt', 'Open an impedance file...');
             else
-                [obj.fileHandle obj.pathHandle] = uigetfile(folderManager.DefaultLoadImpedancesFrontLocation, 'Open an impedance file...');
+                [obj.fileHandle obj.pathHandle] = uigetfile('*.txt', 'Open an impedance file...');
             end
             if ~obj.fileHandle; disp('No file was selected.'); return; end;
             impedanceDataCell = importdata([obj.pathHandle obj.fileHandle], ' ', 200);
@@ -69,7 +69,7 @@ classdef KTUEAImpedanceFile
                 validFlag = 1;
             end
         end
-        function impedanceDataValues = getChannelImpedances(obj)
+        function impedanceDataValues = getImpedances(obj)
             impedanceDataValues = obj.impedanceDataValues;
         end
         function impedanceDataValue = getChannelImpedance(obj, chanNum)
@@ -79,9 +79,94 @@ classdef KTUEAImpedanceFile
             end
             impedanceDataValue = obj.impedanceDataValues(chanNum);
         end
-        function plotImpedances(obj)
-            redThreshold = 800;
-            yelThreshold = 100;
+        function analyzedStat = getImpedanceMean(obj)
+            analyzedStat = mean(obj.impedanceDataValues);
+        end
+        function analyzedStat = getImpedanceMedian(obj)
+            analyzedStat = median(obj.impedanceDataValues);
+        end
+        function analyzedStat = getImpedanceRange(obj)
+            analyzedStat = obj.getImpedanceMax-obj.getImpedanceMin;
+        end
+        function analyzedStat = getImpedanceSTD(obj)
+            analyzedStat = std(obj.impedanceDataValues);
+        end
+        function analyzedStat = getImpedance975Perc(obj)
+            sortedImpedances = sort(obj.impedanceDataValues, 'ascend');
+            analyzedStat = sortedImpedances(round(obj.chanCount*0.975));
+        end
+        function analyzedStat = getImpedance750Perc(obj)
+            sortedImpedances = sort(obj.impedanceDataValues, 'ascend');
+            analyzedStat = sortedImpedances(round(obj.chanCount*0.75));
+        end
+        function analyzedStat = getImpedance250Perc(obj)
+            sortedImpedances = sort(obj.impedanceDataValues, 'ascend');
+            analyzedStat = sortedImpedances(round(obj.chanCount*0.25));
+        end
+        function analyzedStat = getImpedance25Perc(obj)
+            sortedImpedances = sort(obj.impedanceDataValues, 'ascend');
+            analyzedStat = sortedImpedances(round(obj.chanCount*0.025));
+        end
+        function analyzedStat = getImpedanceMin(obj)
+            analyzedStat = min(obj.impedanceDataValues);
+        end
+        function analyzedStat = getImpedanceMax(obj)
+            analyzedStat = max(obj.impedanceDataValues);
+        end
+        function plotStatistics(obj)
+            figure('Name', 'Array Statistics');
+            title('Array Impedance Values Statistics');
+            set(gcf, 'Position', [657 540 288 287]);
+            axis off;
+            text(0,0.9, 'Mean');                                                                                                             text(0.6,0.9, num2str(obj.getImpedanceMean, '%5.1f'));
+            text(0,0.8, 'Median');            text(0.6,0.8, num2str(obj.getImpedanceMean, '%5.1f'));
+            text(0,0.7, 'Range');             text(0.6,0.7, num2str(obj.getImpedanceRange, '%5.1f'));
+            text(0,0.6, 'STD');               text(0.6,0.6, num2str(obj.getImpedanceSTD, '%5.1f'));
+            text(0,0.5, '97.5th Percentile'); text(0.6,0.5, num2str(obj.getImpedance975Perc, '%5.1f'));
+            text(0,0.4, '75th Percentile');   text(0.6,0.4, num2str(obj.getImpedance750Perc, '%5.1f'));
+            text(0,0.3, '25th Percentile');   text(0.6,0.3, num2str(obj.getImpedance250Perc, '%5.1f'));
+            text(0,0.2, '2.5th Percentile');  text(0.6,0.2, num2str(obj.getImpedance25Perc, '%5.1f'));
+            text(0,0.1, 'Min');               text(0.6,0.1, num2str(obj.getImpedanceMin, '%5.1f'));
+            text(0,0.0, 'Max');               text(0.6,0.0, num2str(obj.getImpedanceMax, '%5.1f'));
+        end
+        function plotHistogram(obj, binCount, maxRange)
+            if ~exist('binCount', 'var')
+                binCount = 20;
+            end
+            if ~exist('maxRange', 'var')
+                if max(obj.impedanceDataValues) > 10000
+                    maxRange = 10000;
+                else
+                    maxRange = max(obj.impedanceDataValues);
+                end
+            end
+            hist(obj.impedanceDataValues, min(obj.impedanceDataValues):...
+                                          maxRange/binCount:...
+                                          maxRange,1);
+        title('Impedance Values Histogram');
+        xlabel('Impedance Values (kOhm)');
+        ylabel('Impedance Occurances');
+        end
+        function plotBoxPlot(obj, boxStyle)
+            if ~exist('boxStyle', 'var');
+                boxStyle = 'traditional';
+            end
+            sortedImpedances = sort(obj.impedanceDataValues);
+
+            boxplot(obj.impedanceDataValues);
+            title(['Box Plot (' boxStyle ')']);
+            ylabel('Impedance Values (kOhm)');
+            set(gca, 'xTickLabel', ' ');
+            xlim([0.9, 1.1]);
+            set(gcf, 'Position', [632 356 235 398]);             
+        end
+        function plotImpedances(obj, yelThreshold, redThreshold)
+            if ~exist('yelThreshold', 'var')
+                yelThreshold = 100;
+            end
+            if ~exist('redThreshold', 'var')
+                redThreshold = 800;
+            end
             plotFigure = KTFigure;
             plotFigure.EnlargeFigure;
             plotFigure.MakeBackgroundWhite;
@@ -107,7 +192,7 @@ classdef KTUEAImpedanceFile
             hold off;
             plotFigure.ShowFigure;
         end
-        function colorPlotBackground(obj)
+        function plotImpedancesColorBackground(obj)
             for channelIDX = 1:obj.chanCount
                 obj.Mapfile.GenerateChannelSubplot(channelIDX);
                 axis on;
