@@ -247,11 +247,15 @@ tic;
 matPath = [fileFullPath(1:end-4) '.mat'];
 
 %% Check for a MAT file and load that instead of NEV
+didReadMat = false;
 if exist(matPath, 'file') == 2 && strcmpi(Flags.NoMAT, 'yesmat')
     disp('MAT file corresponding to selected NEV file already exists. Loading MAT instead...');
     load(matPath);
-    if isempty(NEV.Data.Spikes.Waveform) && strcmpi(Flags.ReadData, 'read')
-        disp('The MAT file does not contain waveforms. Loading NEV instead...');
+    didReadMat = true;
+    %if isempty(NEV.Data.Spikes.Waveform) && strcmpi(Flags.ReadData, 'read')
+    %    disp('The MAT file does not contain waveforms. Loading NEV instead...');
+    if isempty(NEV.Data.SerialDigitalIO) && strcmpi(Flags.ReadData, 'read')
+        disp('The MAT file does not contain serial data. Loading NEV instead...');
     else
         if ~nargout
             assignin('base', 'NEV', NEV);
@@ -687,7 +691,7 @@ if strcmpi(Flags.Report, 'report')
 end
 
 %% Saving the NEV structure as a MAT file for easy access
-if strcmpi(Flags.SaveFile, 'save')
+if ~didReadMat && strcmpi(Flags.SaveFile, 'save')
     if exist(matPath, 'file') == 2
         disp(['File ' matPath ' already exists.']);
         overWrite = input('Would you like to overwrite (Y/N)? ', 's');
