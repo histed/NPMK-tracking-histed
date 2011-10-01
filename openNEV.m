@@ -50,6 +50,12 @@ function varargout = openNEV(varargin)
 %                 instead of 8 bits.
 %                 DEFAULT: will assumes that 8 bits of digital IO were used.
 %
+%   't:':         Indicats the portion of the NEV file to be read. For
+%                 example, if t: is set to 0.6 (i.e. 't:0.6')
+%                 then only the first 60% of the file is to be read. If set
+%                 to 0.2-0.5 (i.e. 'portion:0.2:0.5) then the portion
+%                 between 20% and 50% will be read.
+%
 %   OUTPUT:       Contains the NEV structure.
 %
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -116,9 +122,8 @@ function varargout = openNEV(varargin)
 %   University of Utah
 %   Contributors: 
 %     Ehsan Azarnasab, Blackrock Microsystems, ehsan@blackrockmicro.com
-%     Tyler Davis, University of Utah, tyler.davis@hsc.utah.edu
 %   
-%   Version 4.0.1.0
+%   Version 4.1.0.0
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% Defining structures
@@ -142,7 +147,7 @@ NEV.Data.PatientTrigger = struct('TimeStamp', [], 'TriggerType', []);
 NEV.Data.Reconfig = struct('TimeStamp', [], 'ChangeType', [], 'CompName', [], 'ConfigChanged', []);
 Flags = struct;
 
-NEV.MetaTags.openNEVver = '4.0.1.0';
+NEV.MetaTags.openNEVver = '4.1.0.0';
 
 %% Check for multiple versions of openNEV in path
 if size(which('openNEV', '-ALL'),1) > 1
@@ -154,29 +159,15 @@ for i=1:length(varargin)
     switch lower(varargin{i})
         case 'report'
             Flags.Report = varargin{i};
-        case 'noreport'
-            Flags.Report = varargin{i};
         case 'read'
             Flags.ReadData = varargin{i};
-        case 'noread'
-            Flags.ReadData = varargin{i};
-        case 'save'
-            Flags.SaveFile = varargin{i};
         case 'nosave'
             Flags.SaveFile = varargin{i};
-        case 'mat'
-            Flags.NoMAT = 'yesmat';
-        case 'yesmat'
-            Flags.NoMAT = varargin{i};
         case 'nomat'
             Flags.NoMAT = varargin{i};
-        case 'warning'
-            Flags.WarningStat = varargin{i};
         case 'nowarning'
             Flags.WarningStat = varargin{i};
         case 'parse'
-            Flags.ParseData = 'parse';
-        case 'noparse'
             Flags.ParseData = 'parse';
         case 'uv'
             Flags.waveformUnits = 'uV';
@@ -191,6 +182,16 @@ for i=1:length(varargin)
                     varargout{1} = [];
                     return;
                 end
+            elseif length(temp)>3 && strcmpi(temp(1:2),'t:') && ~strcmpi(temp(3), '\') && ~strcmpi(temp(3), '/')
+                temp(1:2) = [];
+                temp = str2num(temp);
+                if length(temp) == 1
+                    fprintf('Only one timepoint (%0.0f) was passed to the function.\n', temp);
+                    fprintf('The initial timepoint is set to 0, so data between 0 and %0.0f will be read.\n', temp);
+                    temp(2) = temp;
+                    temp(1) = 0;
+                end
+                readTime = [temp(1), temp(end)];
             else
                 if ~isnumeric(varargin{i})
                     disp(['Invalid argument ''' varargin{i} ''' .']);
@@ -255,8 +256,9 @@ if exist(matPath, 'file') == 2 && strcmpi(Flags.NoMAT, 'yesmat')
         if ~nargout
             assignin('base', 'NEV', NEV);
             clear variables;
+        else
+            varargout{1} = NEV;
         end
-        varargout{1} = NEV;
         return;
     end
 end
@@ -407,6 +409,8 @@ fseek(FID, 0, 'eof');
 Trackers.fData = ftell(FID);
 Trackers.countDataPacket = (Trackers.fData - Trackers.fExtendedHeader)/Trackers.countPacketBytes;
 NEV.MetaTags.PacketCount = Trackers.countDataPacket;
+
+%%
 Flags.UnparsedDigitalData = 0;
 
 %% Reading packet headers and digital values
@@ -419,18 +423,37 @@ if strcmpi(Flags.ReadData, 'read') && NEV.MetaTags.PacketCount ~= 0
     tRawData  = fread(FID, [10 Trackers.countDataPacket], '10*uint8=>uint8', Trackers.countPacketBytes - 10);
     Timestamp = tRawData(1:4,:);
     Timestamp = typecast(Timestamp(:), 'uint32').';
-    PacketIDs = tRawData(5:6,:);
+
+    %% Calculate the number of packets that need to be read based on the time input parameters
+    if ~exist('readTime', 'var')
+        Trackers.readPackets = [1, length(Timestamp)];
+    else
+        [tmp,Trackers.readPackets(1)] = find(Timestamp > readTime(1)*NEV.MetaTags.SampleRes,1,'first');
+        [tmp,Trackers.readPackets(2)] = find(Timestamp < readTime(2)*NEV.MetaTags.SampleRes,1,'last');
+        clear tmp;
+    end
+    if Trackers.readPackets(2) > Trackers.countDataPacket
+        fprintf('The file contains %0.2f seconds of data. The requested duration of %0.2f will be adjusted to %0.2f.\n', ...
+            double(Trackers.countDataPacket)/double(NEV.MetaTags.SampleRes), ...
+            readTime(2), double(Trackers.countDataPacket)/double(NEV.MetaTags.SampleRes));
+        Trackers.readPackets(2) = Trackers.countDataPacket;
+    end
+   
+    PacketIDs = tRawData(5:6,Trackers.readPackets(1):Trackers.readPackets(2));
     PacketIDs = typecast(PacketIDs(:), 'uint16').';
-    tempClassOrReason = uint8(tRawData(7,:));
+    tempClassOrReason = uint8(tRawData(7,Trackers.readPackets(1):Trackers.readPackets(2)));
     if strcmpi(Flags.digIOBits, '16bits')
-        tempDigiVals      = tRawData(9:10,:);
+        tempDigiVals      = tRawData(9:10,Trackers.readPackets(1):Trackers.readPackets(2));
         tempDigiVals      = typecast(tempDigiVals(:), 'uint16');
     else
-        tempDigiVals      = uint16(tRawData(9,:));
+        tempDigiVals      = uint16(tRawData(9,Trackers.readPackets(1):Trackers.readPackets(2)));
     end
     clear tRawData;
+else
+    Trackers.readPackets = zeros(1,2);
 end
 
+%%
 % Workaround for possible remote recording character
 % % Removes remote recording characters, if any
 % if ~isempty(tempDigiVals) && int16(tempDigiVals(1) == 0)
@@ -481,7 +504,8 @@ if strcmpi(Flags.ReadData, 'read')
       
     if ~isempty(allExtraDataPacketIndices) % if there is any extra packets
         fseek(FID, Trackers.fExtendedHeader, 'bof');
-        tRawData  = fread(FID, [Trackers.countPacketBytes Trackers.countDataPacket], ...
+        fseek(FID, Trackers.readPackets(1) * Trackers.countPacketBytes, 'cof');
+        tRawData  = fread(FID, [Trackers.countPacketBytes Trackers.readPackets(2)], ...
             [num2str(Trackers.countPacketBytes) '*uint8=>uint8'], 0);
         if ~isempty(commentIndices)
             NEV.Data.Comments.TimeStamp = Timestamp(commentIndices);
@@ -553,8 +577,9 @@ if strcmpi(Flags.ReadData, 'read')
       
     % now read waveform
     fseek(FID, Trackers.fExtendedHeader + 8, 'bof'); % Seek to location of spikes
+    fseek(FID, Trackers.readPackets(1)-1 * Trackers.countPacketBytes, 'cof');
     NEV.Data.Spikes.WaveformUnit = Flags.waveformUnits;
-    NEV.Data.Spikes.Waveform = fread(FID, [(Trackers.countPacketBytes-8)/2 Trackers.countDataPacket], ...
+    NEV.Data.Spikes.Waveform = fread(FID, [(Trackers.countPacketBytes-8)/2 Trackers.readPackets(2)], ...
         [num2str((Trackers.countPacketBytes-8)/2) '*int16=>int16'], 8);
     NEV.Data.Spikes.Waveform(:, [digserIndices allExtraDataPacketIndices]) = []; 
     clear allExtraDataPacketIndices;
@@ -623,6 +648,7 @@ if ~isempty(DigiValues)
         end
     else
         NEV.Data.SerialDigitalIO.TimeStamp = digserTimestamp;
+        NEV.Data.SerialDigitalIO.TimeStampSec = double(digserTimestamp)/30000;
         clear digserTimestamp;
         NEV.Data.SerialDigitalIO.UnparsedData = DigiValues;
         clear DigiValues;
