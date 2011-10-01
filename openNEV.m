@@ -256,6 +256,7 @@ if exist(matPath, 'file') == 2 && strcmpi(Flags.NoMAT, 'yesmat')
             assignin('base', 'NEV', NEV);
             clear variables;
         end
+        varargout{1} = NEV;
         return;
     end
 end
