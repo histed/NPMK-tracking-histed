@@ -125,7 +125,7 @@ function varargout = openNEV(varargin)
 %   Contributors: 
 %     Ehsan Azarnasab, Blackrock Microsystems, ehsan@blackrockmicro.com
 %   
-%   Version 4.1.1.0
+%   Version 4.1.2.0
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% Defining structures
@@ -149,7 +149,7 @@ NEV.Data.PatientTrigger = struct('TimeStamp', [], 'TriggerType', []);
 NEV.Data.Reconfig = struct('TimeStamp', [], 'ChangeType', [], 'CompName', [], 'ConfigChanged', []);
 Flags = struct;
 
-NEV.MetaTags.openNEVver = '4.1.1.0';
+NEV.MetaTags.openNEVver = '4.1.2.0';
 
 %% Check for multiple versions of openNEV in path
 if size(which('openNEV', '-ALL'),1) > 1
@@ -177,7 +177,10 @@ for i=1:length(varargin)
             Flags.digIOBits = '16bits';
         otherwise
             temp = varargin{i};
-            if length(temp)>3 && (strcmpi(temp(3),'\') || strcmpi(temp(3),'/'))
+            if length(temp)>3 && ...
+                    (strcmpi(temp(3),'\') || ...
+                     strcmpi(temp(1),'/') || ...
+                     strcmpi(temp(2),'/'))                
                 fileFullPath = varargin{i};
                 if exist(fileFullPath, 'file') ~= 2
                     disp('The file does not exist.');
@@ -201,6 +204,9 @@ for i=1:length(varargin)
                     disp(['Invalid argument ''' num2str(varargin{i}) ''' .']);
                 end
                 clear variables;
+                if nargout
+                    varargout{1} = [];
+                end
                 return;
             end
             clear temp;
@@ -241,6 +247,9 @@ if strcmpi(Flags.ParseData, 'parse')
     if exist('parseCommand.m', 'file') ~= 2
         disp('This version of openNEV requires function parseCommand.m to be placed in path.');
         clear variables;
+        if nargout
+            varargout{1} = [];
+        end
         return;
     end
 end
@@ -295,6 +304,9 @@ if ~any(strcmpi(NEV.MetaTags.FileSpec, {'2.1', '2.2', '2.3'}))
     disp('Unknown filespec. Cannot open file.');
     fclose FID;
     clear variables;
+    if nargout
+        varargout{1} = [];
+    end
     return;
 end
 clear fileFullPath;
@@ -407,6 +419,9 @@ for ii=1:Trackers.countExtHeader
             disp('Please make sure this version of openNEV is compatible with your current NSP firmware.')
             fclose(FID);
             clear variables; 
+            if nargout
+                varargout{1} = [];
+            end
             return;
     end
 end
@@ -448,6 +463,9 @@ if strcmpi(Flags.ReadData, 'read') && NEV.MetaTags.PacketCount ~= 0
                 double(Timestamp(end))/double(NEV.MetaTags.SampleRes), ...
                 readTime(1));
             clear variables;
+            if nargout
+                varargout{1} = [];
+            end
             return;
         end
         [tmp,tempReadPackets] = find(Timestamp < readTime(2)*NEV.MetaTags.SampleRes,1,'last');
