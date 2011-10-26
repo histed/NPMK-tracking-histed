@@ -628,7 +628,7 @@ if strcmpi(Flags.ReadData, 'read')
       
     % now read waveform
     fseek(FID, Trackers.fExtendedHeader + 8, 'bof'); % Seek to location of spikes
-    fseek(FID, Trackers.readPackets(1)-1 * Trackers.countPacketBytes, 'cof');
+    fseek(FID, (Trackers.readPackets(1)-1) * Trackers.countPacketBytes, 'cof');
     if Flags.noWfs
         NEV.Data.Spikes.WaveformUnit = [];
         NEV.Data.Spikes.Waveform = [];
