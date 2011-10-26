@@ -175,6 +175,8 @@ for i=1:length(varargin)
             Flags.waveformUnits = 'uV';
         case '16bits'
             Flags.digIOBits = '16bits';
+        case 'nowfs'
+            Flags.noWfs = true;
         otherwise
             temp = varargin{i};
             if length(temp)>3 && ...
@@ -238,6 +240,7 @@ if ~isfield(Flags, 'ParseData');     Flags.ParseData = 'noparse'; end
 if ~isfield(Flags, 'SaveFile');      Flags.SaveFile = 'save'; end;
 if ~isfield(Flags, 'NoMAT');         Flags.NoMAT = 'yesmat'; end;
 if ~isfield(Flags, 'waveformUnits'); Flags.waveformUnits = 'raw'; end;
+if ~isfield(Flags, 'noWfs');         Flags.noWfs = false; end;
 if ~isfield(Flags, 'digIOBits');     Flags.digIOBits = '8bits'; end;
 if strcmpi(Flags.Report, 'report')
     disp(['openNEV ' NEV.MetaTags.openNEVver]);
@@ -622,18 +625,24 @@ if strcmpi(Flags.ReadData, 'read')
     % now read waveform
     fseek(FID, Trackers.fExtendedHeader + 8, 'bof'); % Seek to location of spikes
     fseek(FID, Trackers.readPackets(1)-1 * Trackers.countPacketBytes, 'cof');
-    NEV.Data.Spikes.WaveformUnit = Flags.waveformUnits;
-    NEV.Data.Spikes.Waveform = fread(FID, [(Trackers.countPacketBytes-8)/2 Trackers.readPackets(2)], ...
-        [num2str((Trackers.countPacketBytes-8)/2) '*int16=>int16'], 8);
-    NEV.Data.Spikes.Waveform(:, [digserIndices allExtraDataPacketIndices]) = []; 
-    clear allExtraDataPacketIndices;
-    if strcmpi(Flags.waveformUnits, 'uv')
-        elecDigiFactors = int16(1000./[NEV.ElectrodesInfo(NEV.Data.Spikes.Electrode).DigitalFactor]);
-        NEV.Data.Spikes.Waveform = bsxfun(@rdivide, NEV.Data.Spikes.Waveform, elecDigiFactors);
-        if strcmpi(Flags.WarningStat, 'warning')
-            fprintf(1,'\nThe spike waveforms are in unit of uV.\n');
-            fprintf(2,'WARNING: This conversion may lead to loss of information.');
-            fprintf(1,'\nRefer to help for more information.\n');
+    if Flags.noWfs
+        NEV.Data.Spikes.WaveformUnit = [];
+        NEV.Data.Spikes.Waveform = [];
+    else
+        NEV.Data.Spikes.WaveformUnit = Flags.waveformUnits;
+        NEV.Data.Spikes.Waveform = fread(FID, [(Trackers.countPacketBytes-8)/2 Trackers.readPackets(2)], ...
+                                         [num2str((Trackers.countPacketBytes-8)/2) '*int16=>int16'], 8);
+        NEV.Data.Spikes.Waveform(:, [digserIndices allExtraDataPacketIndices]) = []; 
+        clear allExtraDataPacketIndices;
+
+        if strcmpi(Flags.waveformUnits, 'uv')
+            elecDigiFactors = int16(1000./[NEV.ElectrodesInfo(NEV.Data.Spikes.Electrode).DigitalFactor]);
+            NEV.Data.Spikes.Waveform = bsxfun(@rdivide, NEV.Data.Spikes.Waveform, elecDigiFactors);
+            if strcmpi(Flags.WarningStat, 'warning')
+                fprintf(1,'\nThe spike waveforms are in unit of uV.\n');
+                fprintf(2,'WARNING: This conversion may lead to loss of information.');
+                fprintf(1,'\nRefer to help for more information.\n');
+            end
         end
     end
 end
