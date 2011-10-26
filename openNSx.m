@@ -4,7 +4,7 @@ function varargout = openNSx(varargin)
 % 
 % Opens and reads an NSx file then returns all file information in a NSx
 % structure. Works with File Spec 2.1, 2.2 and 2.3.
-% Use OUTPUT = openNSx(fname, 'read', 'report', 'electrodes', 'channels', 'duration', 'mode', 'precision', 'skipfactor').
+% Use OUTPUT = openNSx(fname, 'read', 'report', 'e:xx:xx', 'c:xx:xx', 't:xx:xx', 'mode', 'precision', 'skipfactor').
 % 
 % All input arguments are optional. Input arguments can be in any order.
 %
@@ -19,7 +19,7 @@ function varargout = openNSx(varargin)
 %   'report':     Will show a summary report if user passes this argument.
 %                 DEFAULT: will not show report.
 %
-%   'electrodes': User can specify which electrodes need to be read. The
+%   'e:XX:YY':    User can specify which electrodes need to be read. The
 %                 number of electrodes can be greater than or equal to 1
 %                 and less than or equal to 128. The electrodes can be
 %                 selected either by specifying a range (e.g. 20:45) or by
@@ -37,7 +37,7 @@ function varargout = openNSx(varargin)
 %                 KTUEAMapFile to be present in path.
 %                 DEFAULT: will read all existing electrodes.
 %
-%   'channels':   User can specify which channels need to be read. The
+%   'c:XX:YY':    User can specify which channels need to be read. The
 %                 number of channels can be greater than or equal to 1
 %                 and less than or equal to 128. The channels can be
 %                 selected either by specifying a range (e.g. 20:45) or by
@@ -52,7 +52,7 @@ function varargout = openNSx(varargin)
 %                 example for more details.
 %                 DEFAULT: will read all existing analog channels.
 %
-%   'duration':   User can specify the beginning and end of the data
+%   't:XX:YY':    User can specify the beginning and end of the data
 %                 segment to be read. If the start time is greater than the
 %                 length of data the program will exit with an error
 %                 message. If the end time is greater than the length of
@@ -121,7 +121,7 @@ function varargout = openNSx(varargin)
 %   Kian Torab
 %   ktorab@blackrockmicro.com
 %   Blackrock Microsystems
-%   Version 4.0.7.0
+%   Version 4.1.1.0
 %
 
 %% Defining the NSx data structure and sub-branches.
@@ -131,7 +131,7 @@ NSx.MetaTags = struct('FileTypeID',[],'SamplingLabel',[],'ChannelCount',[],'Samp
                       'Timestamp', [], 'DataPoints', [], 'openNSxver', [], 'Filename', [], 'FilePath', [], ...
                       'FileExt', [], 'HeaderOffset', []);
 
-NSx.MetaTags.openNSxver = '4.0.7.0';
+NSx.MetaTags.openNSxver = '4.1.1.0';
 
 % Defining constants
 ExtHeaderLength = 66;
@@ -141,52 +141,7 @@ elecReading     = 0;
 next = '';
 for i=1:length(varargin)
     inputArgument = varargin{i};
-    if strcmpi(next, 'channels')
-        next = '';
-        Chan = inputArgument;
-    elseif strcmpi(next, 'electrodes')
-        next = '';
-        if exist('KTUEAMapFile', 'file') == 2
-            Mapfile = KTUEAMapFile;
-            Elec = str2num(inputArgument); %#ok<ST2NM>
-            for chanIDX = 1:length(Elec)
-                Chan(chanIDX) = Mapfile.Electrode2Channel(Elec(chanIDX));
-            end
-            elecReading = 1;
-        else
-            disp('To read data by ''electrodes'' the function KTUEAMapFile needs to be in path.');
-            clear variables;
-            return;
-        end
-    elseif strcmpi(next, 'duration')
-        next = '';
-        StartPacket = min(inputArgument);
-        EndPacket = max(inputArgument);
-        if (EndPacket > 128 || StartPacket < 1)
-             disp('The electrode number cannot be less than 1 or greater than 128.');
-            if nargout; varargout{1} = []; end
-            return;
-        end
-    elseif strcmpi(next, 'precision')
-        next = '';
-        precisionTypeRaw = inputArgument;
-        switch precisionTypeRaw
-			case 'int16'
-				precisionType = '*int16=>int16';
-            case 'short'
-                precisionType = '*short=>short';
-            case 'double'
-                precisionType = '*int16';
-            otherwise
-                disp('Read type is not valid. Refer to ''help'' for more information.');
-                if nargout; varargout{1} = []; end
-                return;
-        end
-        clear precisionTypeRaw;
-    elseif strcmpi(next, 'skipfactor')
-        next = '';
-        skipFactor = str2double(inputArgument);
-    elseif strcmpi(inputArgument, 'channels')
+    if strcmpi(inputArgument, 'channels')
         next = 'channels';
     elseif strcmpi(inputArgument, 'skipfactor')
         next = 'skipfactor';
@@ -202,20 +157,22 @@ for i=1:length(varargin)
         ReadData = inputArgument;
     elseif strcmpi(inputArgument, 'read')
         ReadData = inputArgument;
-    elseif strncmp(inputArgument, 't:', 2) && inputArgument(3) ~= '\' && inputArgument(3) ~= '/'
-        colonIndex = find(inputArgument(3:end) == ':');
-        StartPacket = str2num(inputArgument(3:colonIndex+1));
-        EndPacket = str2num(inputArgument(colonIndex+3:end));    
-        if min(inputArgument)<1 || max(inputArgument)>128
-            disp('The electrode number cannot be less than 1 or greater than 128.');
-            if nargout; varargout{1} = []; end
-            return;
+    elseif (strncmp(inputArgument, 't:', 2) && inputArgument(3) ~= '\' && inputArgument(3) ~= '/') || strcmpi(next, 'duration')
+        if strncmp(inputArgument, 't:', 2)
+            inputArgument(1:2) = [];
+            inputArgument = str2num(inputArgument);
         end
-        clear colonIndex;
-    elseif strncmp(inputArgument, 'e:', 2) && inputArgument(3) ~= '\' && inputArgument(3) ~= '/'
+        StartPacket = inputArgument(1);
+        EndPacket = inputArgument(end);    
+    elseif (strncmp(inputArgument, 'e:', 2) && inputArgument(3) ~= '\' && inputArgument(3) ~= '/') || strcmpi(next, 'electrodes')
         if exist('KTUEAMapFile', 'file') == 2
             Mapfile = KTUEAMapFile;
             Elec = str2num(inputArgument(3:end)); %#ok<ST2NM>
+            if min(Elec)<1 || max(Elec)>128
+                disp('The electrode number cannot be less than 1 or greater than 128.');
+                if nargout; varargout{1} = []; end
+                return;
+            end
             for chanIDX = 1:length(Elec)
                 Chan(chanIDX) = Mapfile.Electrode2Channel(Elec(chanIDX));
             end
@@ -225,12 +182,24 @@ for i=1:length(varargin)
             clear variables;
             return;
         end
-    elseif strncmp(inputArgument, 's:', 2) && inputArgument(3) ~= '\' && inputArgument(3) ~= '/'
-        skipFactor = str2num(inputArgument(3:end)); %#ok<ST2NM>
-    elseif strncmp(inputArgument, 'c:', 2) && inputArgument(3) ~= '\' && inputArgument(3) ~= '/'
-        Chan = str2num(inputArgument(3:end)); %#ok<ST2NM>
-    elseif strncmp(varargin{i}, 'p:', 2) && inputArgument(3) ~= '\' && inputArgument(3) ~= '/'
-        precisionTypeRaw = varargin{i}(3:end);
+    elseif (strncmp(inputArgument, 's:', 2) && inputArgument(3) ~= '\' && inputArgument(3) ~= '/') || strcmpi(next, 'skipFactor')
+        if strncmp(inputArgument, 's:', 2)
+            skipFactor = str2num(inputArgument(3:end)); %#ok<ST2NM>
+        else
+            skipFactor = inputArgument;
+        end
+    elseif (strncmp(inputArgument, 'c:', 2) && inputArgument(3) ~= '\' && inputArgument(3) ~= '/') || strcmpi(next, 'channels')
+        if strncmp(inputArgument, 'c:', 2)
+            Chan = str2num(inputArgument(3:end)); %#ok<ST2NM>
+        else
+            Chan = inputArgument;
+        end
+    elseif (strncmp(varargin{i}, 'p:', 2) && inputArgument(3) ~= '\' && inputArgument(3) ~= '/') || strcmpi(next, 'precision')
+        if strncmp(varargin{i}, 'p:', 2)
+            precisionTypeRaw = varargin{i}(3:end);
+        else
+            precisionTypeRaw = varargin{i};
+        end
         switch precisionTypeRaw
 			case 'int16'
 				precisionType = '*int16=>int16';
@@ -279,6 +248,9 @@ if ~exist('fname', 'var')
     end
     fext = fname(end-3:end);
 else
+    if isempty(fileparts(fname))
+        fname = which(fname);
+    end
     [path,fname, fext] = fileparts(fname);
     fname = [fname fext];
     path  = [path '/'];
@@ -304,11 +276,11 @@ if strcmp(Report, 'report')
 end
 
 %% Reading Basic Header from file into NSx structure.
-FID                        = fopen([path fname], 'r', 'ieee-le');
+FID                       = fopen([path fname], 'r', 'ieee-le');
 NSx.MetaTags.Filename     = fname;
-NSx.MetaTags.FilePath     = path;
+NSx.MetaTags.FilePath     = path(1:end-1);
 NSx.MetaTags.FileExt      = fext;
-NSx.MetaTags.FileTypeID    = fread(FID, [1,8]   , '*char');
+NSx.MetaTags.FileTypeID   = fread(FID, [1,8]   , '*char');
 if strcmpi(NSx.MetaTags.FileTypeID, 'NEURALSG')
 	NSx.MetaTags.FileSpec      = '2.1';
     NSx.MetaTags.SamplingLabel = fread(FID, [1,16]  , '*char');
@@ -340,7 +312,6 @@ elseif strcmpi(NSx.MetaTags.FileTypeID, 'NEURALCD')
 	end
     NSx.MetaTags.Timestamp     = fread(FID, 1, 'uint32');
     NSx.MetaTags.DataPoints    = fread(FID, 1, 'uint32');
-    NSx.MetaTags.ChannelID     = zeros(ChannelCount, 1);
 	%% Populating extended header information
 	for headerIDX = 1:ChannelCount
 		offset = double((headerIDX-1)*ExtHeaderLength);

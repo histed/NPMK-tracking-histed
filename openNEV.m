@@ -5,7 +5,8 @@ function varargout = openNEV(varargin)
 % Opens an .nev file for reading, returns all file information in a NEV
 % structure. Works with File Spec 2.1 & 2.2 & 2.3.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
-% Use OUTPUT = openNEV(fname, 'read', 'report', 'noparse', 'nowarning', 'nosave', 'nomat', 'uV').
+% Use OUTPUT = openNEV(fname, 'read', 'report', 'noparse', 'nowarning', 
+%                             'nosave', 'nomat', 'uV', 'overwrite').
 % 
 % NOTE: All input arguments are optional. Input arguments may be in any order.
 %
@@ -57,6 +58,14 @@ function varargout = openNEV(varargin)
 %                 and 50 seconds will be read.
 %                 DEFAULT: the entire file will be read if 't:xx:xx' is not
 %                 passed to the function.
+%
+%   'overwrite':  If MATLAB loads a NEV file using 'nomat' and a MAT file
+%                 already exists, by default it will prompt the user to
+%                 allow for overwriting the old MAT. Passing the
+%                 'overwrite' flag will automatically overwrite the newly
+%                 opened NEV file ont the old MAT file.
+%                 DEFAULT: will ask the user whether to overwrite the old
+%                 MAT.
 %
 %   OUTPUT:       Contains the NEV structure.
 %
@@ -119,13 +128,10 @@ function varargout = openNEV(varargin)
 %
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %   Kian Torab
-%   kianabc@kianabc.com
-%   Department of Bioengineering
-%   University of Utah
-%   Contributors: 
-%     Ehsan Azarnasab, Blackrock Microsystems, ehsan@blackrockmicro.com
+%   ktorab@blackrockmicro.com
+%   Blackrock Microsystems
 %   
-%   Version 4.1.2.0
+%   Version 4.2.1.0
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% Defining structures
@@ -149,7 +155,7 @@ NEV.Data.PatientTrigger = struct('TimeStamp', [], 'TriggerType', []);
 NEV.Data.Reconfig = struct('TimeStamp', [], 'ChangeType', [], 'CompName', [], 'ConfigChanged', []);
 Flags = struct;
 
-NEV.MetaTags.openNEVver = '4.1.2.0';
+NEV.MetaTags.openNEVver = '4.2.1.0';
 
 %% Check for multiple versions of openNEV in path
 if size(which('openNEV', '-ALL'),1) > 1
@@ -175,6 +181,8 @@ for i=1:length(varargin)
             Flags.waveformUnits = 'uV';
         case '16bits'
             Flags.digIOBits = '16bits';
+        case 'overwrite'
+            Flags.Overwrite = 'overwrite';
         otherwise
             temp = varargin{i};
             if length(temp)>3 && ...
@@ -239,6 +247,7 @@ if ~isfield(Flags, 'SaveFile');      Flags.SaveFile = 'save'; end;
 if ~isfield(Flags, 'NoMAT');         Flags.NoMAT = 'yesmat'; end;
 if ~isfield(Flags, 'waveformUnits'); Flags.waveformUnits = 'raw'; end;
 if ~isfield(Flags, 'digIOBits');     Flags.digIOBits = '8bits'; end;
+if ~isfield(Flags, 'Overwrite');     Flags.Overwrite = 'noOverwrite'; end;
 if strcmpi(Flags.Report, 'report')
     disp(['openNEV ' NEV.MetaTags.openNEVver]);
 end
@@ -425,6 +434,7 @@ for ii=1:Trackers.countExtHeader
             return;
     end
 end
+NEV.MetaTags.ChannelID = [NEV.ElectrodesInfo.ElectrodeID];
 clear ExtendedHeader PacketID ii;
 
 %% Recording after ExtendedHeader file position and calculating Data Length
@@ -442,7 +452,7 @@ Timestamp = [];
 PacketIDs = [];
 tempClassOrReason = [];
 tempDigiVals = [];
-if strcmpi(Flags.ReadData, 'read') && NEV.MetaTags.PacketCount ~= 0
+if NEV.MetaTags.PacketCount ~= 0
     fseek(FID, Trackers.fExtendedHeader, 'bof');
     tRawData  = fread(FID, [10 Trackers.countDataPacket], '10*uint8=>uint8', Trackers.countPacketBytes - 10);
     Timestamp = tRawData(1:4,:);
@@ -497,16 +507,6 @@ else
     Trackers.readPackets = zeros(1,2);
 end
 
-%%
-% Workaround for possible remote recording character
-% % Removes remote recording characters, if any
-% if ~isempty(tempDigiVals) && int16(tempDigiVals(1) == 0)
-%     tempClassOrReason(1) = [];
-%     tempDigiVals(1) = [];
-%     PacketIDs(1) = [];
-%     Timestamp(1) = [];
-% end
-
 %% Defining PacketID constants
 digserPacketID = 0;
 neuralIndicesPacketIDBounds = [1, 16384];
@@ -532,7 +532,7 @@ NEV.Data.Spikes.TimeStamp  = Timestamp(neuralIndices);
 NEV.Data.Spikes.Electrode  = PacketIDs(neuralIndices);
 clear PacketIDs;
 NEV.Data.Spikes.Unit       = tempClassOrReason(neuralIndices); 
-clear neuralIndices;
+%clear neuralIndices;
 NEV.Data.SerialDigitalIO.InsertionReason   = tempClassOrReason(digserIndices);
 clear tempClassOrReason;
 DigiValues                 = tempDigiVals(digserIndices);
@@ -615,17 +615,18 @@ if strcmpi(Flags.ReadData, 'read')
             NEV.Data.Reconfig.ConfigChanged = char(tRawData(25:Trackers.countPacketBytes, reconfigPacketIDIndices));
             clear reconfigPacketIDIndices;
         end
-    end % end if ~isempty(allExtraDataPacketIndices
+    end % end if ~isempty(allExtraDataPacketIndices)
 
     clear Timestamp tRawData count idx;
       
-    % now read waveform
+   % now read waveform
     fseek(FID, Trackers.fExtendedHeader + 8, 'bof'); % Seek to location of spikes
-    fseek(FID, Trackers.readPackets(1)-1 * Trackers.countPacketBytes, 'cof');
+    fseek(FID, (Trackers.readPackets(1)-1) * Trackers.countPacketBytes, 'cof');
     NEV.Data.Spikes.WaveformUnit = Flags.waveformUnits;
     NEV.Data.Spikes.Waveform = fread(FID, [(Trackers.countPacketBytes-8)/2 Trackers.readPackets(2)], ...
         [num2str((Trackers.countPacketBytes-8)/2) '*int16=>int16'], 8);
     NEV.Data.Spikes.Waveform(:, [digserIndices allExtraDataPacketIndices]) = []; 
+
     clear allExtraDataPacketIndices;
     if strcmpi(Flags.waveformUnits, 'uv')
         elecDigiFactors = int16(1000./[NEV.ElectrodesInfo(NEV.Data.Spikes.Electrode).DigitalFactor]);
@@ -729,7 +730,7 @@ end
 
 %% Saving the NEV structure as a MAT file for easy access
 if strcmpi(Flags.SaveFile, 'save')
-    if exist(matPath, 'file') == 2
+    if exist(matPath, 'file') == 2 && strcmpi(Flags.Overwrite, 'nooverwrite')
         disp(['File ' matPath ' already exists.']);
         overWrite = input('Would you like to overwrite (Y/N)? ', 's');
         if strcmpi(overWrite, 'y')
@@ -738,6 +739,10 @@ if strcmpi(Flags.SaveFile, 'save')
         else
             disp('File was not overwritten.');
         end
+    elseif exist(matPath, 'file') == 2 && strcmpi(Flags.Overwrite, 'overwrite')        
+        disp(['File ' matPath ' already exists.']);
+        disp('Overwriting the old MAT file. This may take a few seconds...');
+        save(matPath, 'NEV', '-v7.3');        
     else
         disp('Saving MAT file. This may take a few seconds...');
         save(matPath, 'NEV', '-v7.3');
