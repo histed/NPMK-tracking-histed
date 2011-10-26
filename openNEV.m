@@ -50,11 +50,13 @@ function varargout = openNEV(varargin)
 %                 instead of 8 bits.
 %                 DEFAULT: will assumes that 8 bits of digital IO were used.
 %
-%   't:':         Indicats the portion of the NEV file to be read. For
-%                 example, if t: is set to 0.6 (i.e. 't:0.6')
-%                 then only the first 60% of the file is to be read. If set
-%                 to 0.2-0.5 (i.e. 'portion:0.2:0.5) then the portion
-%                 between 20% and 50% will be read.
+%   't:':         Indicats the time window of the NEV file to be read. For
+%                 example, if t: is set to 2 (i.e. 't:0.6')
+%                 then only the first 2 of the file is to be read. If set
+%                 to 2-50 (i.e. 't:2:50) then the time between 2 seconds
+%                 and 50 seconds will be read.
+%                 DEFAULT: the entire file will be read if 't:xx:xx' is not
+%                 passed to the function.
 %
 %   OUTPUT:       Contains the NEV structure.
 %
@@ -123,15 +125,16 @@ function varargout = openNEV(varargin)
 %   Contributors: 
 %     Ehsan Azarnasab, Blackrock Microsystems, ehsan@blackrockmicro.com
 %   
-%   Version 4.1.0.0
+%   Version 4.1.2.0
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% Defining structures
 NEV = struct('MetaTags',[], 'ElectrodesInfo', [], 'Data', []);
 NEV.MetaTags = struct('Subject', [], 'Experimenter', [], 'DateTime', [],...
     'SampleRes',[],'Comment',[],'FileTypeID',[],'Flags',[], 'openNEVver', [], ...
-    'DateTimeRaw', [], 'FileSpec', [], 'PacketBytes', [], 'HeaderOffset', [], 'PacketCount', [], ...
-    'TimeRes', [], 'Application', [], 'Filename', [], 'FilePath', [], 'DataDuration', []);
+    'DateTimeRaw', [], 'FileSpec', [], 'PacketBytes', [], 'HeaderOffset', [], ...
+    'DataDuration', [], 'DataDurationSec', [], 'PacketCount', [], ...
+    'TimeRes', [], 'Application', [], 'Filename', [], 'FilePath', []);
 NEV.Data = struct('SerialDigitalIO', [], 'Spikes', [], 'Comments', [], 'VideoSync', [], ...
     'Tracking', [], 'PatientTrigger', [], 'Reconfig', []);
 NEV.Data.Spikes = struct('TimeStamp', [],'Electrode', [],...
@@ -140,14 +143,13 @@ NEV.Data.SerialDigitalIO = struct('InputType', [], 'TimeStamp', [],...
     'TimeStampSec', [], 'Type', [], 'Value', [], 'InsertionReason', [], 'UnparsedData', []);
 NEV.Data.VideoSync = struct('TimeStamp', [], 'FileNumber', [], 'FrameNumber', [], 'ElapsedTime', [], 'SourceID', []);
 NEV.Data.Comments = struct('TimeStamp', [], 'CharSet', [], 'Color', [], 'Comments', []);
-NEV.Data.Tracking = struct('TimeStamp', [], 'ChildID', [], 'TrackableID', [], ...
-    'CenterX', [], 'CenterY', [], 'CenterZ', [], 'DirectionX2', [], 'DirectionY2', [], 'DirectionZ2', [] , ...
-    'Volume', [], 'Radius1', [], 'Radius2', [], 'Radius3', [], 'ObjChildCount', []);
+NEV.Data.Tracking = struct('TimeStamp', [], 'ParentID', [], 'NodeID', [], ...
+    'NodeCount', [], 'PointCount', [], 'X', [], 'Y', [], 'Z', []);
 NEV.Data.PatientTrigger = struct('TimeStamp', [], 'TriggerType', []);
 NEV.Data.Reconfig = struct('TimeStamp', [], 'ChangeType', [], 'CompName', [], 'ConfigChanged', []);
 Flags = struct;
 
-NEV.MetaTags.openNEVver = '4.1.0.0';
+NEV.MetaTags.openNEVver = '4.1.2.0';
 
 %% Check for multiple versions of openNEV in path
 if size(which('openNEV', '-ALL'),1) > 1
@@ -177,7 +179,10 @@ for i=1:length(varargin)
             Flags.noWfs = true;
         otherwise
             temp = varargin{i};
-            if length(temp)>3 && strcmpi(temp(end-3),'.')
+            if length(temp)>3 && ...
+                    (strcmpi(temp(3),'\') || ...
+                     strcmpi(temp(1),'/') || ...
+                     strcmpi(temp(2),'/'))                
                 fileFullPath = varargin{i};
                 if exist(fileFullPath, 'file') ~= 2
                     disp('The file does not exist.');
@@ -201,6 +206,9 @@ for i=1:length(varargin)
                     disp(['Invalid argument ''' num2str(varargin{i}) ''' .']);
                 end
                 clear variables;
+                if nargout
+                    varargout{1} = [];
+                end
                 return;
             end
             clear temp;
@@ -242,6 +250,9 @@ if strcmpi(Flags.ParseData, 'parse')
     if exist('parseCommand.m', 'file') ~= 2
         disp('This version of openNEV requires function parseCommand.m to be placed in path.');
         clear variables;
+        if nargout
+            varargout{1} = [];
+        end
         return;
     end
 end
@@ -300,6 +311,9 @@ if ~any(strcmpi(NEV.MetaTags.FileSpec, {'2.1', '2.2', '2.3'}))
     disp('Unknown filespec. Cannot open file.');
     fclose FID;
     clear variables;
+    if nargout
+        varargout{1} = [];
+    end
     return;
 end
 clear fileFullPath;
@@ -316,6 +330,13 @@ NEV.MetaTags.Comment(find(NEV.MetaTags.Comment==0,1):end) = 0;
 
 %% Recording after BasicHeader file position
 Trackers.fBasicHeader = ftell(FID); %#ok<NASGU>
+
+% Calculating the length of the data
+currentLocation = ftell(FID);
+fseek(FID, -Trackers.countPacketBytes, 'eof');
+NEV.MetaTags.DataDuration = fread(FID, 1, 'uint32=>double');
+NEV.MetaTags.DataDurationSec = double(NEV.MetaTags.DataDuration) / double(NEV.MetaTags.SampleRes);
+fseek(FID, currentLocation, 'bof');
 
 %% Reading ExtendedHeader information
 for ii=1:Trackers.countExtHeader
@@ -405,6 +426,9 @@ for ii=1:Trackers.countExtHeader
             disp('Please make sure this version of openNEV is compatible with your current NSP firmware.')
             fclose(FID);
             clear variables; 
+            if nargout
+                varargout{1} = [];
+            end
             return;
     end
 end
@@ -435,15 +459,35 @@ if strcmpi(Flags.ReadData, 'read') && NEV.MetaTags.PacketCount ~= 0
     if ~exist('readTime', 'var')
         Trackers.readPackets = [1, length(Timestamp)];
     else
-        [tmp,Trackers.readPackets(1)] = find(Timestamp > readTime(1)*NEV.MetaTags.SampleRes,1,'first');
-        [tmp,Trackers.readPackets(2)] = find(Timestamp < readTime(2)*NEV.MetaTags.SampleRes,1,'last');
-        clear tmp;
-    end
-    if Trackers.readPackets(2) > Trackers.countDataPacket
-        fprintf('The file contains %0.2f seconds of data. The requested duration of %0.2f will be adjusted to %0.2f.\n', ...
-            double(Trackers.countDataPacket)/double(NEV.MetaTags.SampleRes), ...
-            readTime(2), double(Trackers.countDataPacket)/double(NEV.MetaTags.SampleRes));
-        Trackers.readPackets(2) = Trackers.countDataPacket;
+        [tmp,tempReadPackets] = find(Timestamp > readTime(1)*NEV.MetaTags.SampleRes,1,'first');
+        if ~isempty(tempReadPackets)
+            Trackers.readPackets(1) = tempReadPackets;
+        else
+            Trackers.readPackets(1) = NaN;
+        end
+        if isnan(Trackers.readPackets(1))
+            fprintf('The file contains %0.2f seconds of data. The requested begining timestamp of %0.2f seconds is longer than the duration.\n', ...
+                double(Timestamp(end))/double(NEV.MetaTags.SampleRes), ...
+                readTime(1));
+            clear variables;
+            if nargout
+                varargout{1} = [];
+            end
+            return;
+        end
+        [tmp,tempReadPackets] = find(Timestamp < readTime(2)*NEV.MetaTags.SampleRes,1,'last');
+        if ~isempty(tempReadPackets)
+            if readTime(2)*NEV.MetaTags.SampleRes > Timestamp(end)
+                fprintf('The file contains %0.2f seconds of data. The requested end duration of %0.2f seconds will be adjusted to %0.2f seconds.\n', ...
+                    double(Timestamp(end))/double(NEV.MetaTags.SampleRes), ...
+                    readTime(2),...
+                    double(Timestamp(end))/double(NEV.MetaTags.SampleRes));
+            end
+            Trackers.readPackets(2) = tempReadPackets;
+        else
+            Trackers.readPackets(2) = NaN;
+        end
+        clear tmp, tempReadPackets;
     end
    
     PacketIDs = tRawData(5:6,Trackers.readPackets(1):Trackers.readPackets(2));
@@ -511,7 +555,7 @@ if strcmpi(Flags.ReadData, 'read')
       
     if ~isempty(allExtraDataPacketIndices) % if there is any extra packets
         fseek(FID, Trackers.fExtendedHeader, 'bof');
-        fseek(FID, Trackers.readPackets(1) * Trackers.countPacketBytes, 'cof');
+        fseek(FID, (Trackers.readPackets(1)-1) * Trackers.countPacketBytes, 'cof');
         tRawData  = fread(FID, [Trackers.countPacketBytes Trackers.readPackets(2)], ...
             [num2str(Trackers.countPacketBytes) '*uint8=>uint8'], 0);
         if ~isempty(commentIndices)
@@ -607,9 +651,6 @@ if strcmpi(Flags.ReadData, 'read')
     end
 end
 clear digserIndices;
-% Calculating the length of the data
-fseek(FID, -Trackers.countPacketBytes, 'eof');
-NEV.MetaTags.DataDuration = fread(FID, 1, 'uint32=>double');
 
 %% Parse digital data if requested
 if ~isempty(DigiValues)
